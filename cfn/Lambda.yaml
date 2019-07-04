@@ -1,0 +1,121 @@
+---
+AWSTemplateFormatVersion: 2010-09-09
+
+Parameters:
+  S3BucketName:
+    Type: String
+  S3KeyName:
+    Type: String
+  MemorySize:
+    Type: Number
+    Default: 1536
+  S3ObjectVersionId:
+    Type: String
+    Default: "Rz.rwH2xX.NoxT5BEYIn60QT7IdAB6zb"
+  DBSourceArn:
+    Type: String
+    Default: 'arn:aws:dynamodb:us-east-1:601454096596:table/user-table/stream/2019-06-30T04:48:05.746'
+  ElasticsearchEndpoint:
+    Type: String
+    Default: "<override endpoint>"
+
+Resources:
+  DynamoDbFillerLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: 'DynamoDbFillerLambda'
+      Description: DynamoDb filler lambda
+      Code:
+        S3Bucket: !Ref S3BucketName
+        S3Key: !Ref S3KeyName
+        S3ObjectVersion: !Ref S3ObjectVersionId
+      Handler: 'com.local.lambda.DynamoDbFillHandler'
+      Role: !GetAtt DynamoDbFillerLambdaRole.Arn
+      Runtime: java8
+      MemorySize: !Ref MemorySize
+      Timeout: 300
+      Environment:
+        Variables:
+          START_VALUE: 0
+          END_VALUE: 500
+
+  DynamoDbFillerLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: root
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+              - Effect: Allow
+                Action:
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:BatchWriteItem
+                Resource: arn:aws:dynamodb:us-east-1:*:*
+
+  ElasticsearchPublisherLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: 'ElasticsearchPublisherLambda'
+      Description: Elasticsearch publisher lambda
+      Code:
+        S3Bucket: !Ref S3BucketName
+        S3Key: !Ref S3KeyName
+        S3ObjectVersion: !Ref S3ObjectVersionId
+      Handler: 'com.local.lambda.ElasticsearchPublisher'
+      Role: !GetAtt ElasticsearchPublisherExecutionRole.Arn
+      Runtime: java8
+      MemorySize: !Ref MemorySize
+      Timeout: 300
+      Environment:
+        Variables:
+          ES_ENDPOINT: !Ref ElasticsearchEndpoint
+
+  ElasticsearchPublisherExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: DynamoDbElasticsearchPublisherExecutionRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/AWSLambdaInvocation-DynamoDB
+        - arn:aws:iam::aws:policy/AmazonESFullAccess
+        - arn:aws:iam::aws:policy/AmazonDynamoDBReadOnlyAccess
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+
+  UserEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      BatchSize: 50
+      Enabled: false
+      EventSourceArn: !Ref DBSourceArn
+      FunctionName: 'ElasticsearchPublisherLambda'
+      StartingPosition: TRIM_HORIZON
